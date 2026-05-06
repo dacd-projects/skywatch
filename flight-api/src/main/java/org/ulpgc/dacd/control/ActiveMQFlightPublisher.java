@@ -6,7 +6,7 @@ import jakarta.jms.*;
 import org.apache.activemq.ActiveMQConnectionFactory;
 import org.ulpgc.dacd.model.Flight;
 
-public class ActiveMQFlightStore implements FlightStore {
+public class ActiveMQFlightPublisher implements FlightStore {
 
     private static final String BROKER_URL = "tcp://localhost:61616";
     private static final String TOPIC_NAME = "Flight";
@@ -16,7 +16,7 @@ public class ActiveMQFlightStore implements FlightStore {
     private Session session;
     private MessageProducer producer;
 
-    public ActiveMQFlightStore() {
+    public ActiveMQFlightPublisher() {
         try {
             ConnectionFactory factory = new ActiveMQConnectionFactory(BROKER_URL);
             Connection connection = factory.createConnection();

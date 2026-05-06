@@ -1,6 +1,6 @@
 package org.ulpgc.dacd;
 
-import org.ulpgc.dacd.control.ActiveMQFlightStore;
+import org.ulpgc.dacd.control.ActiveMQFlightPublisher;
 import org.ulpgc.dacd.control.FlightController;
 import org.ulpgc.dacd.control.FlightFeeder;
 import org.ulpgc.dacd.control.FlightStore;
@@ -10,7 +10,7 @@ public class Main {
 
     public static void main(String[] args) {
         FlightFeeder feeder = new OpenSkyFlightFeeder();
-        FlightStore store = new ActiveMQFlightStore();
+        FlightStore store = new ActiveMQFlightPublisher();
         FlightController controller = new FlightController(feeder, store);
         controller.run();
 

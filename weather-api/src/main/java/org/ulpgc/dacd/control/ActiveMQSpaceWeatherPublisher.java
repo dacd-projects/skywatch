@@ -6,7 +6,7 @@ import jakarta.jms.*;
 import org.apache.activemq.ActiveMQConnectionFactory;
 import org.ulpgc.dacd.model.SpaceWeather;
 
-public class ActiveMQSpaceWeatherStore implements SpaceWeatherStore {
+public class ActiveMQSpaceWeatherPublisher implements SpaceWeatherStore {
 
     private static final String BROKER_URL = "tcp://localhost:61616";
     private static final String TOPIC_NAME = "SpaceWeather";
@@ -16,7 +16,7 @@ public class ActiveMQSpaceWeatherStore implements SpaceWeatherStore {
     private Session session;
     private MessageProducer producer;
 
-    public ActiveMQSpaceWeatherStore() {
+    public ActiveMQSpaceWeatherPublisher() {
         try {
             ConnectionFactory factory = new ActiveMQConnectionFactory(BROKER_URL);
             Connection connection = factory.createConnection();
