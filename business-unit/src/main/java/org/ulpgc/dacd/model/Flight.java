@@ -8,5 +8,6 @@ public record Flight(
         double longitude,
         double altitude,
         double velocity,
+        String lastUpdate,
         long ts
 ) {}
