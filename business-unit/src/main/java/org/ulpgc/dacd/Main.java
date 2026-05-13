@@ -4,8 +4,9 @@ import org.ulpgc.dacd.control.AlertService;
 import org.ulpgc.dacd.control.DatamartUpdater;
 import org.ulpgc.dacd.control.EventStoreReader;
 import org.ulpgc.dacd.control.TopicSubscriber;
-import org.ulpgc.dacd.rest.RestApi;
+import org.ulpgc.dacd.view.RestApi;
 import org.ulpgc.dacd.store.DatamartStore;
+import org.ulpgc.dacd.control.CorrelationService;
 
 public class Main {
     public static void main(String[] args) {
@@ -23,7 +24,10 @@ public class Main {
         subscriber.start();
 
         AlertService alertService = new AlertService(datamartStore);
-        RestApi restApi = new RestApi(datamartStore, alertService);
+        CorrelationService correlationService = new CorrelationService(datamartStore);
+        correlationService.startPeriodicCalculation(5);
+
+        RestApi restApi = new RestApi(datamartStore, alertService, correlationService);
         restApi.start(8080);
     }
 }
