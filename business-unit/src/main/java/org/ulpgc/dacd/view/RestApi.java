@@ -26,7 +26,9 @@ public class RestApi {
     }
 
     public void start(int port) {
-        Javalin app = Javalin.create().start(port);
+        Javalin app = Javalin.create(config -> {
+            config.staticFiles.add("/public");
+        }).start(port);
 
         app.get("/flights", ctx -> ctx.json(datamartStore.getActiveFlights()));
 
@@ -36,6 +38,7 @@ public class RestApi {
 
         app.get("/correlation", ctx -> ctx.json(Map.of(
                 "pearson", correlationService.getLastPearson(),
+                "spearman", correlationService.getLastSpearman(),
                 "samples", correlationService.getSampleCount(),
                 "interpretation", interpretPearson(correlationService.getLastPearson())
         )));
