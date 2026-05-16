@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SkyWatch — Space Weather &amp; Aviation Dashboard</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;600;700&display=swap');
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --bg-primary: #0a0e17;
+            --bg-card: #111827;
+            --bg-card-hover: #1a2332;
+            --text-primary: #e2e8f0;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --accent-green: #10b981;
+            --accent-red: #ef4444;
+            --accent-amber: #f59e0b;
+            --accent-blue: #3b82f6;
+            --accent-purple: #8b5cf6;
+            --border: #1e293b;
+        }
+
+        body {
+            font-family: 'IBM Plex Sans', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .sidebar {
+            width: 380px;
+            min-width: 380px;
+            background: var(--bg-card);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+        }
+
+        .sidebar-header {
+            padding: 24px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .sidebar-header h1 {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 20px;
+            font-weight: 600;
+            letter-spacing: -0.5px;
+            color: var(--text-primary);
+        }
+
+        .sidebar-header p {
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+
+        .card {
+            margin: 16px;
+            padding: 20px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+        }
+
+        .card-title {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: var(--text-muted);
+            margin-bottom: 16px;
+        }
+
+        .metric {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .metric:last-child { border-bottom: none; }
+
+        .metric-label {
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+
+        .metric-value {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        .kp-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .kp-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        .kp-low { background: var(--accent-green); box-shadow: 0 0 8px var(--accent-green); }
+        .kp-moderate { background: var(--accent-amber); box-shadow: 0 0 8px var(--accent-amber); }
+        .kp-high { background: var(--accent-red); box-shadow: 0 0 8px var(--accent-red); }
+
+        .correlation-bar {
+            margin-top: 12px;
+            height: 6px;
+            background: var(--border);
+            border-radius: 3px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .correlation-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.8s ease;
+        }
+
+        .correlation-marker {
+            position: absolute;
+            top: -6px;
+            width: 2px;
+            height: 18px;
+            background: var(--text-primary);
+            transform: translateX(-50%);
+            transition: left 0.8s ease;
+        }
+
+        .alert-item {
+            padding: 12px;
+            margin-bottom: 8px;
+            background: rgba(239, 68, 68, 0.08);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+            border-radius: 8px;
+            font-size: 13px;
+        }
+
+        .alert-item .callsign {
+            font-family: 'IBM Plex Mono', monospace;
+            font-weight: 600;
+            color: var(--accent-red);
+        }
+
+        .alert-item .details {
+            color: var(--text-muted);
+            margin-top: 4px;
+            font-size: 12px;
+        }
+
+        .no-alerts {
+            color: var(--accent-green);
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .status-bar {
+            margin-top: auto;
+            padding: 16px 24px;
+            border-top: 1px solid var(--border);
+            font-size: 12px;
+            color: var(--text-muted);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .status-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--accent-green);
+            display: inline-block;
+            margin-right: 6px;
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        .map-container {
+            flex: 1;
+            position: relative;
+        }
+
+        #map {
+            width: 100%;
+            height: 100%;
+        }
+
+        .leaflet-container {
+            background: var(--bg-primary);
+        }
+
+        .legend {
+            position: absolute;
+            bottom: 24px;
+            right: 24px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 16px;
+            z-index: 1000;
+            min-width: 180px;
+        }
+
+        .legend-title {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: var(--text-muted);
+            margin-bottom: 12px;
+        }
+
+        .legend-gradient {
+            height: 12px;
+            border-radius: 6px;
+            background: linear-gradient(to right, #10b981, #f59e0b, #ef4444);
+            margin-bottom: 6px;
+        }
+
+        .legend-labels {
+            display: flex;
+            justify-content: space-between;
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .refresh-badge {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 11px;
+            background: var(--bg-primary);
+            padding: 4px 10px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+        }
+    </style>
+</head>
+<body>
+<div class="sidebar">
+    <div class="sidebar-header">
+        <h1>SKYWATCH</h1>
+        <p>Space Weather &amp; Aviation Monitor</p>
+    </div>
+
+    <div class="card">
+        <div class="card-title">Space Weather</div>
+        <div class="metric">
+            <span class="metric-label">Kp Index</span>
+            <span class="metric-value kp-indicator">
+                    <span class="kp-dot" id="kpDot"></span>
+                    <span id="kpValue">—</span>
+                </span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Storm Level</span>
+            <span class="metric-value" id="stormLevel">—</span>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">Correlation Analysis</div>
+        <div class="metric">
+            <span class="metric-label">Pearson</span>
+            <span class="metric-value" id="pearsonValue">—</span>
+        </div>
+        <div class="correlation-bar">
+            <div class="correlation-fill" id="pearsonBar" style="width: 50%; background: var(--accent-blue);"></div>
+            <div class="correlation-marker" id="pearsonMarker" style="left: 50%;"></div>
+        </div>
+        <div class="metric" style="margin-top: 12px;">
+            <span class="metric-label">Spearman</span>
+            <span class="metric-value" id="spearmanValue">—</span>
+        </div>
+        <div class="correlation-bar">
+            <div class="correlation-fill" id="spearmanBar" style="width: 50%; background: var(--accent-purple);"></div>
+            <div class="correlation-marker" id="spearmanMarker" style="left: 50%;"></div>
+        </div>
+        <div class="metric" style="margin-top: 12px;">
+            <span class="metric-label">Samples</span>
+            <span class="metric-value" id="samplesValue">—</span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Interpretation</span>
+            <span class="metric-value" id="interpretation" style="font-size: 13px;">—</span>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">Flight Statistics</div>
+        <div class="metric">
+            <span class="metric-label">Active Flights</span>
+            <span class="metric-value" id="totalFlights">—</span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Polar Flights (±60°)</span>
+            <span class="metric-value" id="polarFlights">—</span>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">Active Alerts</div>
+        <div id="alertsContainer">
+            <div class="no-alerts">✓ No active alerts</div>
+        </div>
+    </div>
+
+    <div class="status-bar">
+        <span><span class="status-dot"></span>Live — Auto-refresh 30s</span>
+        <span class="refresh-badge" id="lastUpdate">—</span>
+    </div>
+</div>
+
+<div class="map-container">
+    <div id="map"></div>
+    <div class="legend">
+        <div class="legend-title">Risk Heatmap</div>
+        <div class="legend-gradient"></div>
+        <div class="legend-labels">
+            <span>Low risk</span>
+            <span>High risk</span>
+        </div>
+    </div>
+</div>
+
+<script>
+    const map = L.map('map', {
+        center: [55, 0],
+        zoom: 3,
+        zoomControl: false
+    });
+
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution: '© OpenStreetMap © CARTO',
+        maxZoom: 18
+    }).addTo(map);
+
+    L.control.zoom({ position: 'topleft' }).addTo(map);
+
+    let heatLayer = null;
+
+    function getKpClass(kp) {
+        if (kp >= 5) return 'kp-high';
+        if (kp >= 3) return 'kp-moderate';
+        return 'kp-low';
+    }
+
+    function getStormLevel(kp) {
+        if (kp >= 8) return 'G4 — Severe';
+        if (kp >= 7) return 'G3 — Strong';
+        if (kp >= 6) return 'G2 — Moderate';
+        if (kp >= 5) return 'G1 — Minor';
+        return 'Quiet';
+    }
+
+    function updateCorrelationBar(value, barId, markerId) {
+        const bar = document.getElementById(barId);
+        const marker = document.getElementById(markerId);
+        if (isNaN(value)) {
+            bar.style.width = '0%';
+            marker.style.left = '50%';
+            return;
+        }
+        const percent = ((value + 1) / 2) * 100;
+        bar.style.width = percent + '%';
+        marker.style.left = percent + '%';
+    }
+
+    function calculateRiskIntensity(lat, kp) {
+        const polarFactor = Math.abs(lat) / 90.0;
+        const kpFactor = kp / 9.0;
+        return Math.min(polarFactor * kpFactor * 2.0, 1.0);
+    }
+
+    async function fetchData() {
+        try {
+            const [flightsRes, weatherRes, correlationRes, alertsRes] = await Promise.all([
+                fetch('/flights'),
+                fetch('/weather'),
+                fetch('/correlation'),
+                fetch('/alerts')
+            ]);
+
+            const flights = await flightsRes.json();
+            const weather = await weatherRes.json();
+            const correlation = await correlationRes.json();
+            const alerts = await alertsRes.json();
+
+            // Space Weather
+            const kp = weather?.kpIndex ?? 0;
+            document.getElementById('kpValue').textContent = kp.toFixed(1);
+            document.getElementById('kpDot').className = 'kp-dot ' + getKpClass(kp);
+            document.getElementById('stormLevel').textContent = getStormLevel(kp);
+            document.getElementById('stormLevel').style.color =
+                kp >= 5 ? 'var(--accent-red)' :
+                kp >= 3 ? 'var(--accent-amber)' :
+                'var(--accent-green)';
+
+            // Correlation
+            const pearson = correlation.pearson ?? NaN;
+            const spearman = correlation.spearman ?? NaN;
+            document.getElementById('pearsonValue').textContent = isNaN(pearson) ? '—' : pearson.toFixed(4);
+            document.getElementById('spearmanValue').textContent = isNaN(spearman) ? '—' : spearman.toFixed(4);
+            document.getElementById('samplesValue').textContent = correlation.samples ?? '—';
+            document.getElementById('interpretation').textContent = correlation.interpretation ?? '—';
+            updateCorrelationBar(pearson, 'pearsonBar', 'pearsonMarker');
+            updateCorrelationBar(spearman, 'spearmanBar', 'spearmanMarker');
+
+            // Flights
+            const flightArray = Array.isArray(flights) ? flights : [];
+            const polarCount = flightArray.filter(f => Math.abs(f.latitude) >= 60).length;
+            document.getElementById('totalFlights').textContent = flightArray.length;
+            document.getElementById('polarFlights').textContent = polarCount;
+
+            // Heatmap
+            if (heatLayer) map.removeLayer(heatLayer);
+            const heatData = flightArray.map(f => {
+                const intensity = calculateRiskIntensity(f.latitude, kp);
+                return [f.latitude, f.longitude, intensity];
+            });
+            heatLayer = L.heatLayer(heatData, {
+                radius: 25,
+                blur: 20,
+                maxZoom: 10,
+                gradient: {
+                    0.0: '#10b981',
+                    0.3: '#10b981',
+                    0.5: '#f59e0b',
+                    0.7: '#ef4444',
+                    1.0: '#dc2626'
+                }
+            }).addTo(map);
+
+            // Alerts
+            const alertsContainer = document.getElementById('alertsContainer');
+            if (alerts.length === 0) {
+                alertsContainer.innerHTML = '<div class="no-alerts">✓ No active alerts</div>';
+            } else {
+                alertsContainer.innerHTML = alerts.map(a =>
+                    `<div class="alert-item">
+                        <span class="callsign">${a.callsign || a.icao}</span>
+                        <span style="float:right; color: var(--accent-red);">${a.riskLevel}</span>
+                        <div class="details">
+                            Lat: ${a.latitude.toFixed(2)}° · Lon: ${a.longitude.toFixed(2)}° · Kp: ${a.kpIndex}
+                        </div>
+                    </div>`
+                ).join('');
+            }
+
+            // Timestamp
+            document.getElementById('lastUpdate').textContent =
+                new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+        } catch (err) {
+            console.error('Error fetching data:', err);
+        }
+    }
+
+    fetchData();
+    setInterval(fetchData, 30000);
+</script>
+</body>
+</html>
