@@ -10,3 +10,6 @@ generated-sources/
 
 # Logs
 *.log
+
+# Event Store data
+eventstore/
