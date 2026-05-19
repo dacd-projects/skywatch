@@ -1,35 +1,41 @@
-# Space Weather & Aviation Analysis — Sprint 3
+# SkyWatch — Space Weather & Aviation Analysis
 
-## Contexto
+## Descripción del proyecto
 
-Proyecto que analiza el impacto del **clima espacial** en la **aviación comercial**, especialmente en rutas transpolares. Se capturan datos geomagnéticos (NASA DONKI API) y vuelos en tiempo real (OpenSky API), publicándolos en un broker de mensajería (ActiveMQ), almacenándolos en un Event Store basado en ficheros, y explotándolos mediante una unidad de negocio con arquitectura Lambda.
+SkyWatch es un sistema que analiza en tiempo real el impacto del **clima espacial** en la **aviación comercial**, especialmente en rutas transpolares. Cuando se producen tormentas geomagnéticas (medidas por el índice Kp), los sistemas de comunicación y navegación de los aviones que vuelan en latitudes polares pueden verse afectados.
 
-> Sprint 3: implementación del módulo `business-unit` con arquitectura Lambda (Batch Layer + Speed Layer), datamart en memoria y API REST con Javalin.
+El sistema captura datos geomagnéticos desde la API de NOAA SWPC y datos de vuelos en tiempo real desde OpenSky Network, los publica en un broker de mensajería (ActiveMQ), los persiste en un Event Store basado en ficheros y los explota mediante una unidad de negocio con arquitectura Lambda que ofrece un **dashboard interactivo con mapa de calor** y **análisis de correlación estadística** (Pearson y Spearman).
 
----
+## Propuesta de valor
 
-## Objetivo de la funcionalidad de negocio
+SkyWatch aporta valor a **operadores de aviación y controladores de tráfico aéreo** que gestionan rutas transpolares:
 
-El módulo `business-unit` detecta **vuelos comerciales en riesgo geomagnético**. Cuando el índice Kp supera un umbral crítico (≥ 5.0) y hay vuelos activos en latitudes polares (> 60° o < -60°), el sistema emite alertas de riesgo en tiempo real.
+- **Detección de riesgo en tiempo real**: identifica vuelos activos en zonas polares (latitud > 60°) cuando el índice Kp supera niveles de tormenta geomagnética (≥ 5.0).
+- **Análisis de correlación estadística**: calcula periódicamente los coeficientes de Pearson y Spearman entre el índice Kp y la densidad de vuelos polares, permitiendo validar cuantitativamente si las tormentas solares afectan al tráfico aéreo.
+- **Dashboard visual**: mapa de calor interactivo que muestra las zonas de mayor riesgo geomagnético combinando la posición de los vuelos con la intensidad de la actividad solar.
+## Justificación de las APIs elegidas
 
-Esto aporta valor a operadores de aviación que gestionan rutas transpolares, ya que las tormentas geomagnéticas pueden afectar las comunicaciones y los sistemas de navegación en esas rutas.
+| API | Justificación |
+|-----|---------------|
+| **NOAA SWPC** (Space Weather) | Proporciona el índice Kp en tiempo real desde el Space Weather Prediction Center. Es gratuita, no requiere autenticación y devuelve datos JSON actualizados cada minuto (`planetary_k_index_1m.json`). El índice Kp es la medida estándar de actividad geomagnética usada internacionalmente para clasificar tormentas solares (G1-G5). |
+| **OpenSky Network** (Aviation) | Ofrece datos ADS-B de vuelos en tiempo real a nivel mundial: posición, altitud, velocidad e identificación. Es gratuita, con API REST abierta y cobertura global. |
 
+La combinación de ambas fuentes permite correlacionar fenómenos solares con tráfico aéreo real, algo que no ofrecen individualmente.
+ 
 ---
 
 ## Módulos
 
 | Módulo | Responsabilidad |
-|---|---|
-| `flight-api` | Captura vuelos en tiempo real desde OpenSky Network y los publica en ActiveMQ |
-| `weather-api` | Captura índices Kp desde NASA DONKI y los publica en ActiveMQ |
-| `event-store-builder` | Se suscribe a los topics y persiste los eventos en un Event Store basado en ficheros |
-| `business-unit` | Construye y mantiene un datamart en memoria con arquitectura Lambda y expone una API REST |
-
+|--------|----------------|
+| `flight-api` | Captura vuelos desde OpenSky Network y los publica en ActiveMQ (topic `Flight`) |
+| `weather-api` | Captura índices Kp desde NOAA SWPC y los publica en ActiveMQ (topic `SpaceWeather`) |
+| `event-store-builder` | Se suscribe a los topics y persiste los eventos en ficheros `.events` (Event Store) |
+| `business-unit` | Arquitectura Lambda: reconstruye estado desde histórico, consume eventos en tiempo real, calcula correlaciones y sirve dashboard con API REST |
+ 
 ---
 
-## Arquitectura
-
-### Diagrama general del sistema
+## Arquitectura del sistema
 
 ```mermaid
 graph TD
@@ -37,45 +43,58 @@ graph TD
         FA[flight-api]
         WA[weather-api]
     end
-
+ 
     subgraph Broker
         TF[Topic: Flight]
         TW[Topic: SpaceWeather]
     end
-
-    subgraph EventStore
+ 
+    subgraph Event Store
         ESB[event-store-builder]
         ES[(eventstore/)]
     end
-
-    subgraph BusinessUnit
-        BL[Batch Layer - EventStoreReader]
-        SL[Speed Layer - TopicSubscriber]
+ 
+    subgraph business-unit
+        BL[Batch Layer<br>EventStoreReader]
+        SL[Speed Layer<br>TopicSubscriber]
         DU[DatamartUpdater]
         DM[(DatamartStore)]
+        CS[CorrelationService]
         AS[AlertService]
-        API[REST API - Javalin :8080]
+        API[RestApi + Dashboard<br>Javalin :8080]
     end
-
-    FA --> TF
-    WA --> TW
-    TF --> ESB
-    TW --> ESB
-    ESB --> ES
-
-    ES --> BL
-    TF --> SL
-    TW --> SL
-
+ 
+    FA -->|publish| TF
+    WA -->|publish| TW
+    TF -->|subscribe| ESB
+    TW -->|subscribe| ESB
+    ESB -->|write| ES
+ 
+    ES -->|read .events| BL
+    TF -->|durable subscribe| SL
+    TW -->|durable subscribe| SL
+ 
     BL --> DU
     SL --> DU
-    DU --> DM
+    DU -->|update| DM
+    DM --> CS
     DM --> AS
     DM --> API
+    CS -->|periodic calculation| API
     AS --> API
 ```
 
-### Diagrama de clases — `flight-api`
+### Arquitectura Lambda
+
+El módulo `business-unit` implementa una arquitectura Lambda con dos capas:
+
+- **Batch Layer** (`EventStoreReader`): al arrancar, lee todos los ficheros `.events` históricos del Event Store, los procesa cronológicamente y reconstruye el estado del datamart. Esto permite que el sistema se reinicie sin perder datos.
+- **Speed Layer** (`TopicSubscriber`): una vez cargado el histórico, se suscribe de forma durable a los topics de ActiveMQ para consumir eventos en tiempo real y mantener el datamart actualizado.
+  Ambas capas alimentan el mismo `DatamartUpdater`, que actúa como punto de entrada unificado al datamart.
+
+---
+
+## Diagrama de clases — `flight-api`
 
 ```mermaid
 classDiagram
@@ -103,27 +122,28 @@ classDiagram
         +save(flight: Flight)
     }
     class Flight {
-        -icao: String
-        -callsign: String
-        -country: String
-        -latitude: double
-        -longitude: double
-        -altitude: double
-        -velocity: double
-        -lastUpdate: String
-        -ts: long
+        <<record>>
+        +icao: String
+        +callsign: String
+        +country: String
+        +latitude: double
+        +longitude: double
+        +altitude: double
+        +velocity: double
+        +lastUpdate: String
+        +ts: long
     }
-
+ 
     Main --> FlightController
     FlightController --> FlightFeeder
     FlightController --> FlightStore
     FlightFeeder <|.. OpenSkyFlightFeeder
     FlightStore <|.. ActiveMQFlightPublisher
-    OpenSkyFlightFeeder --> Flight
-    ActiveMQFlightPublisher --> Flight
 ```
 
-### Diagrama de clases — `weather-api`
+**Principios aplicados**: SRP (cada clase una responsabilidad), DIP (depende de interfaces `FlightFeeder` y `FlightStore`, no de implementaciones concretas), OCP (se pueden añadir nuevos stores implementando la interfaz sin modificar código existente).
+
+## Diagrama de clases — `weather-api`
 
 ```mermaid
 classDiagram
@@ -151,23 +171,23 @@ classDiagram
         +save(event: SpaceWeather)
     }
     class SpaceWeather {
-        -eventType: String
-        -kpIndex: double
-        -startTime: String
-        -endTime: String
-        -ts: long
+        <<record>>
+        +kpIndex: double
+        +startTime: String
+        +endTime: String
+        +ts: long
     }
-
+ 
     Main --> SpaceWeatherController
     SpaceWeatherController --> NasaFeeder
     SpaceWeatherController --> SpaceWeatherStore
     NasaFeeder <|.. SpaceWeatherClient
     SpaceWeatherStore <|.. ActiveMQSpaceWeatherPublisher
-    SpaceWeatherClient --> SpaceWeather
-    ActiveMQSpaceWeatherPublisher --> SpaceWeather
 ```
 
-### Diagrama de clases — `event-store-builder`
+**Principios aplicados**: misma arquitectura que `flight-api` — DIP mediante interfaces, SRP, OCP.
+
+## Diagrama de clases — `event-store-builder`
 
 ```mermaid
 classDiagram
@@ -185,12 +205,14 @@ classDiagram
     class FileEventStore {
         +save(topic: String, json: String)
     }
-
+ 
     Main --> EventStoreBuilder
     EventStoreBuilder --> FileEventStore
 ```
 
-### Diagrama de clases — `business-unit`
+**Principios aplicados**: SRP (persistencia delegada a `FileEventStore`), patrón Observer (listener de mensajes JMS).
+
+## Diagrama de clases — `business-unit`
 
 ```mermaid
 classDiagram
@@ -201,6 +223,7 @@ classDiagram
         -eventStorePath: String
         -datamartUpdater: DatamartUpdater
         +loadHistory()
+        -processFile(path: Path)
     }
     class TopicSubscriber {
         -brokerUrl: String
@@ -210,15 +233,27 @@ classDiagram
     }
     class DatamartUpdater {
         -datamartStore: DatamartStore
+        -gson: Gson
         +process(json: String)
     }
     class DatamartStore {
-        -activeFlights: Map~String, Flight~
+        -activeFlights: ConcurrentHashMap
         -latestSpaceWeather: SpaceWeather
+        -kpHistory: List~Double~
+        -polarDensityHistory: List~Double~
         +updateFlight(flight: Flight)
         +updateSpaceWeather(weather: SpaceWeather)
-        +getActiveFlights() Collection~Flight~
-        +getLatestSpaceWeather() SpaceWeather
+        +getKpHistory() List~Double~
+        +getPolarDensityHistory() List~Double~
+    }
+    class CorrelationService {
+        -datamartStore: DatamartStore
+        -scheduler: ScheduledExecutorService
+        -lastPearson: double
+        -lastSpearman: double
+        +startPeriodicCalculation(intervalMinutes: int)
+        +getLastPearson() double
+        +getLastSpearman() double
     }
     class AlertService {
         -datamartStore: DatamartStore
@@ -227,71 +262,56 @@ classDiagram
     class RestApi {
         -datamartStore: DatamartStore
         -alertService: AlertService
+        -correlationService: CorrelationService
         +start(port: int)
     }
-    class Flight {
-        -icao: String
-        -callsign: String
-        -country: String
-        -latitude: double
-        -longitude: double
-        -altitude: double
-        -velocity: double
-        -lastUpdate: String
-        -ts: long
-    }
-    class SpaceWeather {
-        -eventType: String
-        -kpIndex: double
-        -startTime: String
-        -endTime: String
-        -ts: long
-    }
-    class FlightRiskAlert {
-        -icao: String
-        -callsign: String
-        -latitude: double
-        -longitude: double
-        -altitude: double
-        -kpIndex: double
-        -riskLevel: String
-    }
-
+ 
     Main --> EventStoreReader
     Main --> TopicSubscriber
     Main --> DatamartStore
     Main --> DatamartUpdater
+    Main --> CorrelationService
     Main --> AlertService
     Main --> RestApi
     EventStoreReader --> DatamartUpdater
     TopicSubscriber --> DatamartUpdater
     DatamartUpdater --> DatamartStore
+    CorrelationService --> DatamartStore
     AlertService --> DatamartStore
     RestApi --> DatamartStore
     RestApi --> AlertService
-    DatamartStore --> Flight
-    DatamartStore --> SpaceWeather
-    AlertService --> FlightRiskAlert
+    RestApi --> CorrelationService
 ```
 
+**Principios aplicados**:
+- **SRP**: cada clase tiene una responsabilidad única — `EventStoreReader` lee histórico, `TopicSubscriber` consume tiempo real, `DatamartUpdater` procesa JSON, `DatamartStore` almacena estado, `CorrelationService` calcula estadísticos, `AlertService` evalúa riesgo, `RestApi` sirve la interfaz.
+- **CQRS**: separación entre escritura (feeders → broker → datamart) y lectura (REST API → datamart).
+- **Observer**: `TopicSubscriber` actúa como listener JMS de los eventos publicados por los feeders.
+- **Arquitectura Lambda**: `EventStoreReader` (batch) + `TopicSubscriber` (speed) alimentan el mismo datamart.
 ---
 
-## Diseño del Datamart
+## Estructura del Datamart
 
-El datamart está implementado en memoria mediante `DatamartStore`, usando estructuras optimizadas para consultas en tiempo real:
+El datamart está implementado en memoria dentro de `DatamartStore`, optimizado para consultas en tiempo real:
 
-- `ConcurrentHashMap<String, Flight>` — indexado por ICAO, permite acceso O(1) por vuelo y actualizaciones concurrentes seguras desde la Speed Layer
-- `SpaceWeather latestSpaceWeather` — solo se necesita el último índice Kp para evaluar el riesgo actual
+| Estructura | Tipo | Propósito |
+|-----------|------|-----------|
+| `activeFlights` | `ConcurrentHashMap<String, Flight>` | Vuelos activos indexados por ICAO — acceso O(1), thread-safe |
+| `latestSpaceWeather` | `SpaceWeather` | Último índice Kp recibido |
+| `kpHistory` | `CopyOnWriteArrayList<Double>` | Serie temporal de valores Kp — para correlación |
+| `polarDensityHistory` | `CopyOnWriteArrayList<Double>` | Serie temporal de densidad de vuelos polares — para correlación |
 
-**Justificación:** el caso de uso es detección de riesgo en tiempo real, no análisis histórico profundo. La estructura en memoria es suficiente y óptima para consultas de baja latencia. Al arrancar, la Batch Layer reconstruye el estado inicial leyendo el Event Store histórico, garantizando coherencia aunque el sistema se reinicie.
+**Justificación**: el caso de uso principal es detección de riesgo en tiempo real y cálculo de correlación estadística. La estructura en memoria permite consultas de baja latencia. Las listas `CopyOnWriteArrayList` son thread-safe para escritura concurrente desde la Speed Layer. Al arrancar, la Batch Layer reconstruye el estado completo leyendo el Event Store.
 
+Los estadísticos de correlación (Pearson y Spearman) se precalculan periódicamente (cada 5 minutos) mediante `CorrelationService` y se almacenan como resultados listos para consumir — el datamart sirve datos ya procesados, no datos crudos.
+ 
 ---
 
 ## Event Store
 
 Los eventos se almacenan en la siguiente estructura de directorios:
 
-```text
+```
 eventstore/
 └── {topic}/
     └── {source}/
@@ -300,35 +320,34 @@ eventstore/
 
 Ejemplo:
 
-```text
+```
 eventstore/
 ├── Flight/
 │   └── flight-api/
-│       └── 20260427.events
+│       ├── 20260427.events
+│       └── 20260506.events
 └── SpaceWeather/
     └── weather-api/
-        └── 20260427.events
+        ├── 20260427.events
+        └── 20260506.events
 ```
 
-Cada línea de un fichero `.events` representa un evento JSON con al menos los campos:
-
-- `ts` → timestamp del evento
-- `ss` → identificador del sistema origen
-
+Cada línea de un fichero `.events` es un evento JSON con al menos:
+- `ts` — timestamp del evento (epoch millis)
+- `ss` — identificador del sistema origen
 ---
 
 ## Compilar y ejecutar
 
 ### Prerrequisitos
 
-1. Java 21
-2. Maven
-3. ActiveMQ 6.2.4 en ejecución en `tcp://localhost:61616`
-
+- Java 21
+- Maven
+- Apache ActiveMQ 6.2.4
 ### 1. Compilar el proyecto completo
 
 ```bash
-mvn install
+mvn clean install
 ```
 
 ### 2. Arrancar ActiveMQ
@@ -339,77 +358,101 @@ cd apache-activemq-6.2.4/bin
 activemq.bat start      # Windows
 ```
 
+Consola de administración disponible en `http://localhost:8161` (usuario: admin, contraseña: admin).
+
 ### 3. Ejecutar el Event Store Builder
 
 ```bash
 cd event-store-builder
-mvn exec:java -Dexec.mainClass="org.ulpgc.dacd.Main" -Dexec.args="tcp://localhost:61616 ./eventstore Flight,SpaceWeather"
+mvn exec:java "-Dexec.mainClass=org.ulpgc.dacd.Main" "-Dexec.args=tcp://localhost:61616 ./eventstore Flight,SpaceWeather"
 ```
 
 ### 4. Ejecutar el feeder de vuelos
 
 ```bash
 cd flight-api
-mvn exec:java -Dexec.mainClass="org.ulpgc.dacd.Main"
+mvn exec:java "-Dexec.mainClass=org.ulpgc.dacd.Main"
 ```
 
 ### 5. Ejecutar el feeder de clima espacial
 
 ```bash
 cd weather-api
-mvn exec:java -Dexec.mainClass="org.ulpgc.dacd.Main"
+mvn exec:java "-Dexec.mainClass=org.ulpgc.dacd.Main"
 ```
 
 ### 6. Ejecutar la Business Unit
 
 ```bash
 cd business-unit
-mvn exec:java -Dexec.mainClass="org.ulpgc.dacd.Main" -Dexec.args="tcp://localhost:61616 ./eventstore"
+mvn exec:java "-Dexec.mainClass=org.ulpgc.dacd.Main" "-Dexec.args=tcp://localhost:61616 ./eventstore"
 ```
 
+> **Nota**: si la ruta del eventstore contiene espacios, encerrarla entre comillas: `"C:\ruta con espacios\eventstore"`
+ 
 ---
 
-## API REST — Endpoints
+## Interfaz de usuario
 
-Una vez arrancado el módulo `business-unit`, la API queda disponible en `http://localhost:8080`.
+Una vez arrancado el módulo `business-unit`, la interfaz está disponible en `http://localhost:8080`.
 
-| Método | Endpoint | Descripción |
-|--------|----------|-------------|
-| GET | `/flights` | Lista todos los vuelos activos en el datamart |
-| GET | `/weather` | Último índice Kp registrado |
-| GET | `/alerts` | Vuelos en riesgo geomagnético (Kp ≥ 5.0 y latitud polar) |
+### Dashboard (mapa de calor)
 
-### Ejemplo de respuesta `/alerts`
+Accesible en `http://localhost:8080` o `http://localhost:8080/dashboard.html`.
 
-```json
-[
-  {
-    "icao": "A1B2C3",
-    "callsign": "BAW123",
-    "latitude": 72.4,
-    "longitude": -45.2,
-    "altitude": 11000.0,
-    "kpIndex": 6.3,
-    "riskLevel": "HIGH"
-  }
-]
+Muestra en tiempo real:
+- Mapa de calor con las posiciones de los vuelos, coloreado según el riesgo geomagnético (combinación de latitud polar + índice Kp).
+- Panel lateral con índice Kp actual, nivel de tormenta, coeficientes de correlación Pearson y Spearman, número de muestras, estadísticas de vuelos y alertas activas.
+- Auto-refresco cada 30 segundos.
+### API REST
+
+| Método | Endpoint | Descripción | Ejemplo de respuesta |
+|--------|----------|-------------|---------------------|
+| GET | `/flights` | Vuelos activos en el datamart | `[{"icao":"A5F852","callsign":"RTY484","latitude":40.45,...}]` |
+| GET | `/weather` | Último índice Kp registrado | `{"kpIndex":2.3,"startTime":"2026-05-18T12:00Z",...}` |
+| GET | `/alerts` | Vuelos en riesgo geomagnético | `[{"icao":"A1B2C3","callsign":"BAW123","riskLevel":"HIGH",...}]` |
+| GET | `/correlation` | Estadísticos de correlación precalculados | `{"pearson":0.0,"spearman":0.5087,"samples":3902,...}` |
+
+### Ejemplo de consulta con curl
+
+```bash
+curl http://localhost:8080/correlation
 ```
 
+Respuesta:
+
+```json
+{
+  "pearson": 0.0,
+  "spearman": 0.5087,
+  "samples": 3902,
+  "interpretation": "Weak or no correlation"
+}
+```
+ 
 ---
 
 ## Tecnologías
 
 - Java 21
 - Maven (multimódulo)
-- ActiveMQ 6.2.4
-- Gson
+- Apache ActiveMQ 6.2.4 (`jakarta.jms.*`)
+- Gson 2.10.1
 - Javalin 6.3.0
+- Leaflet.js 1.9.4 + Leaflet.heat (mapa de calor)
 - OpenSky Network API
-- NASA DONKI API
+- NOAA SWPC API
+---
 
+## Trabajo futuro
+
+- **Predictor con scikit-learn**: entrenar un modelo de regresión en Python que, dado un Kp futuro, prediga la densidad de vuelos polares afectados. Java invocaría el script mediante `ProcessBuilder` y expondría la predicción en un endpoint `/predict`.
+- **Persistencia del datamart**: migrar de memoria a SQLite para mantener el historial entre reinicios sin depender del Event Store.
+- **Alertas push**: notificaciones en tiempo real mediante WebSockets cuando el Kp supere el umbral crítico.
 ---
 
 ## Autores
 
-Adrián Santana Rosales  
+Adrián Santana Rosales
+
 Nira Armas Maestre
