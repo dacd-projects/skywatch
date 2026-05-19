@@ -16,7 +16,6 @@
         <module>flight-api</module>
         <module>event-store-builder</module>
         <module>business-unit</module>
-        <module>business-unit</module>
     </modules>
 
     <properties>

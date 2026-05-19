@@ -43,6 +43,7 @@ public class RestApi {
                 "interpretation", interpretPearson(correlationService.getLastPearson())
         )));
 
+        app.get("/", ctx -> ctx.redirect("/dashboard.html"));
         System.out.println("REST API disponible en http://localhost:" + port);
     }
 }

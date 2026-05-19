@@ -22,7 +22,7 @@ public class CorrelationService {
     }
 
     public void startPeriodicCalculation(int intervalMinutes) {
-        scheduler.scheduleAtFixedRate(this::calculatePearson, 0, intervalMinutes, TimeUnit.MINUTES);
+        scheduler.scheduleAtFixedRate(this::calculateCorrelations, 0, intervalMinutes, TimeUnit.MINUTES);
     }
 
     private void calculateCorrelations() {
@@ -84,7 +84,8 @@ public class CorrelationService {
             sumD2 += d * d;
         }
 
-        lastSpearman = 1.0 - (6.0 * sumD2) / (n * ((double) n * n - 1));
+        double denominator = n * ((double) n * n - 1);
+        lastSpearman = (denominator == 0) ? 0.0 : 1.0 - (6.0 * sumD2) / denominator;
     }
 
     private double[] computeRanks(List<Double> values) {
