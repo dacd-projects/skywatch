@@ -12,9 +12,9 @@
     <packaging>pom</packaging>
 
     <modules>
+        <module>event-store-builder</module>
         <module>weather-api</module>
         <module>flight-api</module>
-        <module>event-store-builder</module>
         <module>business-unit</module>
     </modules>
 
